@@ -6,25 +6,25 @@ import json
 
 # Database to connect to
 DATABASE = {
-    'user':     'pramsey',
-    'password': 'password',
+    'user':     'topodata',
+    'password': '*****',
     'host':     'localhost',
     'port':     '5432',
-    'database': 'nyc'
+    'database': 'topodata'
     }
 
 # Table to query for MVT data, and columns to
 # include in the tiles.
 TABLE = {
-    'table':       'nyc_streets',
-    'srid':        '26918',
-    'geomColumn':  'geom',
-    'attrColumns': 'gid, name, type'
+    'table':       'data.topography_object',
+    'srid':        '28992',
+    'geomColumn':  'geometry',
+    'attrColumns': 'id, level'
     }  
 
 # HTTP server information
-HOST = 'localhost'
-PORT = 8080
+HOST = '0.0.0.0'
+PORT = 8081
 
 
 ########################################################################
@@ -60,34 +60,37 @@ class TileRequestHandler(http.server.BaseHTTPRequestHandler):
         return True
 
 
-    # Calculate envelope in "Spherical Mercator" (https://epsg.io/3857)
+    # Calculate envelope in "Amersfoort/RD new" (https://epsg.io/28992)
     def tileToEnvelope(self, tile):
-        # Width of world in EPSG:3857
-        worldMercMax = 20037508.3427892
-        worldMercMin = -1 * worldMercMax
-        worldMercSize = worldMercMax - worldMercMin
-        # Width in tiles
+        # Width and height of world in EPSG:28992
+        worldRdMinX = -285401.92
+        worldRdMaxX = 595401.92
+        worldRdMinY = 22598.08
+        worldRdMaxY = 903401.92
+        worldRdSize = worldRdMaxX - worldRdMinX
+        # Width and height in tiles
         worldTileSize = 2 ** tile['zoom']
-        # Tile width in EPSG:3857
-        tileMercSize = worldMercSize / worldTileSize
+        # Tile width in EPSG:28992
+        tileRdSize = worldRdSize / worldTileSize
+        
         # Calculate geographic bounds from tile coordinates
         # XYZ tile coordinates are in "image space" so origin is
         # top-left, not bottom right
         env = dict()
-        env['xmin'] = worldMercMin + tileMercSize * tile['x']
-        env['xmax'] = worldMercMin + tileMercSize * (tile['x'] + 1)
-        env['ymin'] = worldMercMax - tileMercSize * (tile['y'] + 1)
-        env['ymax'] = worldMercMax - tileMercSize * (tile['y'])
+        env['xmin'] = worldRdMinX + tileRdSize * tile['x']
+        env['xmax'] = worldRdMinX + tileRdSize * (tile['x'] + 1)
+        env['ymin'] = worldRdMinY + tileRdSize * (tile['y'] + 1)
+        env['ymax'] = worldRdMinY + tileRdSize * (tile['y'])
         return env
 
 
-    # Generate SQL to materialize a query envelope in EPSG:3857.
+    # Generate SQL to materialize a query envelope in EPSG:28992.
     # Densify the edges a little so the envelope can be
     # safely converted to other coordinate systems.
     def envelopeToBoundsSQL(self, env):
         DENSIFY_FACTOR = 4
         env['segSize'] = (env['xmax'] - env['xmin'])/DENSIFY_FACTOR
-        sql_tmpl = 'ST_Segmentize(ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax}, 3857),{segSize})'
+        sql_tmpl = 'ST_Segmentize(ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax}, 28992),{segSize})'
         return sql_tmpl.format(**env)
 
 
@@ -106,7 +109,7 @@ class TileRequestHandler(http.server.BaseHTTPRequestHandler):
                        {env}::box2d AS b2d
             ),
             mvtgeom AS (
-                SELECT ST_AsMVTGeom(ST_Transform(t.{geomColumn}, 3857), bounds.b2d) AS geom, 
+                SELECT ST_AsMVTGeom(ST_Transform(ST_CurveToLine(t.{geomColumn}), 28992), bounds.b2d) AS geom, 
                        {attrColumns}
                 FROM {table} t, bounds
                 WHERE ST_Intersects(t.{geomColumn}, ST_Transform(bounds.geom, {srid}))
